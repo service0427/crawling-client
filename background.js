@@ -14,8 +14,8 @@ class DistributedCrawlingAgent {
     };
     
     // 프로덕션 서버 URL
-    this.SERVER_URL = 'wss://wapi.mkt-guide.com/ws';
-    this.HTTP_SERVER = 'https://wapi.mkt-guide.com';
+    this.SERVER_URL = 'ws://mkt.techb.kr:8081/ws';
+    this.HTTP_SERVER = 'http://mkt.techb.kr';
     
     // 개발 서버 URL (로컬 테스트용)
     // this.SERVER_URL = 'ws://localhost:8787/ws';

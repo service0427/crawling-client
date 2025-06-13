@@ -14,8 +14,8 @@
   ],
   
   "host_permissions": [
-    "https://wapi.mkt-guide.com/*",
-    "wss://wapi.mkt-guide.com/*",
+    "http://mkt.techb.kr/*",
+    "ws://mkt.techb.kr:8081/*",
     "https://search.shopping.naver.com/*",
     "https://shopping.naver.com/*",
     "https://naver.com/*"
@@ -46,7 +46,7 @@
   
   "externally_connectable": {
     "matches": [
-      "https://wapi.mkt-guide.com/*"
+      "http://mkt.techb.kr/*"
     ]
   }
 } 

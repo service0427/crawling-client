@@ -12,7 +12,7 @@ class DistributedCrawlingAgent {
     };
     
     // 프로덕션 서버 URL
-    this.HTTP_SERVER = 'https://wapi.mkt-guide.com';
+    this.HTTP_SERVER = 'http://mkt.techb.kr';
     
     this.pollInterval = 3000; // 3초마다 작업 확인
     this.pollTimer = null;
