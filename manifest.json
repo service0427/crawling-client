@@ -1,0 +1,52 @@
+{
+  "manifest_version": 3,
+  "name": "분산 크롤링 에이전트",
+  "version": "2.0.0",
+  "description": "분산 크롤링 시스템의 Chrome 확장 에이전트",
+  
+  "permissions": [
+    "storage",
+    "tabs",
+    "activeTab",
+    "background",
+    "unlimitedStorage",
+    "webRequest"
+  ],
+  
+  "host_permissions": [
+    "https://wapi.mkt-guide.com/*",
+    "wss://wapi.mkt-guide.com/*",
+    "https://search.shopping.naver.com/*",
+    "https://shopping.naver.com/*",
+    "https://naver.com/*"
+  ],
+  
+  "background": {
+    "service_worker": "background-http.js",
+    "type": "module"
+  },
+  
+  "content_scripts": [
+    {
+      "matches": [
+        "https://search.shopping.naver.com/*",
+        "https://shopping.naver.com/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_end"
+    }
+  ],
+  
+  "web_accessible_resources": [
+    {
+      "resources": ["*"],
+      "matches": ["<all_urls>"]
+    }
+  ],
+  
+  "externally_connectable": {
+    "matches": [
+      "https://wapi.mkt-guide.com/*"
+    ]
+  }
+} 
