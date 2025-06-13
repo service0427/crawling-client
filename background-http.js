@@ -136,10 +136,10 @@ class DistributedCrawlingAgent {
               await this.handleJobAssignment(job);
             }
           }
-          
-          // 하트비트 전송
-          this.sendHeartbeat();
         }
+        
+        // 작업 유무와 관계없이 항상 하트비트 전송
+        await this.sendHeartbeat();
       } catch (error) {
         console.error('❌ 폴링 오류:', error);
       }
