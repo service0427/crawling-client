@@ -8,9 +8,7 @@
     "storage",
     "tabs",
     "activeTab",
-    "background",
-    "unlimitedStorage",
-    "webRequest"
+    "unlimitedStorage"
   ],
   
   "host_permissions": [
@@ -22,8 +20,7 @@
   ],
   
   "background": {
-    "service_worker": "background-http.js",
-    "type": "module"
+    "service_worker": "background-http.js"
   },
   
   "content_scripts": [
@@ -36,6 +33,11 @@
       "run_at": "document_end"
     }
   ],
+  
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "크롤링 에이전트 설정"
+  },
   
   "web_accessible_resources": [
     {

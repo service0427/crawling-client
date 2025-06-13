@@ -35,13 +35,22 @@ class DistributedCrawlingAgent {
   }
 
   async loadAgentId() {
-    const result = await chrome.storage.local.get(['agentId']);
+    const result = await chrome.storage.local.get(['agentId', 'agentAlias']);
     if (result.agentId) {
       this.agentId = result.agentId;
+      // 별칭이 있으면 에이전트 ID에 추가
+      if (result.agentAlias) {
+        this.agentId = `${result.agentId}_${result.agentAlias}`;
+      }
       console.log('📋 기존 에이전트 ID 로드:', this.agentId);
     } else {
-      this.agentId = this.generateAgentId();
-      await chrome.storage.local.set({ agentId: this.agentId });
+      const baseId = this.generateAgentId();
+      this.agentId = baseId;
+      // 별칭이 있으면 추가
+      if (result.agentAlias) {
+        this.agentId = `${baseId}_${result.agentAlias}`;
+      }
+      await chrome.storage.local.set({ agentId: baseId });
       console.log('🆕 새 에이전트 ID 생성:', this.agentId);
     }
   }
@@ -105,14 +114,13 @@ class DistributedCrawlingAgent {
       if (!this.isConnected) return;
       
       try {
-        const response = await fetch(`${this.HTTP_SERVER}/api/agent/poll`, {
+        const response = await fetch(`${this.HTTP_SERVER}/api/agent/get-pending-jobs`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'
           },
           body: JSON.stringify({
-            agentId: this.agentId,
-            currentJobs: Array.from(this.currentJobs.keys())
+            agentId: this.agentId
           })
         });
 
@@ -135,16 +143,19 @@ class DistributedCrawlingAgent {
 
   async sendHeartbeat() {
     try {
-      await fetch(`${this.HTTP_SERVER}/api/agent/heartbeat`, {
+      await fetch(`${this.HTTP_SERVER}/api/agent/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           agentId: this.agentId,
-          timestamp: Date.now(),
-          currentJobs: Array.from(this.currentJobs.keys()),
-          statistics: this.statistics
+          type: 'HEARTBEAT',
+          payload: {
+            timestamp: Date.now(),
+            currentJobs: Array.from(this.currentJobs.keys()),
+            statistics: this.statistics
+          }
         })
       });
     } catch (error) {
@@ -246,19 +257,21 @@ class DistributedCrawlingAgent {
     }
     
     try {
-      const response = await fetch(`${this.HTTP_SERVER}/api/agent/job-result`, {
+      const response = await fetch(`${this.HTTP_SERVER}/api/agent/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           agentId: this.agentId,
-          jobId: jobId,
-          success: success,
-          result: result,
-          error: error,
-          processingTime: processingTime || (Date.now() - job.startTime),
-          timestamp: Date.now()
+          type: 'JOB_RESULT',
+          payload: {
+            jobId: jobId,
+            status: success ? 'completed' : 'failed',
+            data: result,
+            error: error,
+            processingTime: processingTime || (Date.now() - job.startTime)
+          }
         })
       });
 
@@ -335,10 +348,76 @@ class DistributedCrawlingAgent {
           sendResponse({ success: true });
           break;
           
+        case 'UPDATE_AGENT_ALIAS':
+          console.log('📝 에이전트 별칭 업데이트:', message.alias);
+          this.updateAgentAlias(message.alias).then(() => {
+            sendResponse({ success: true });
+          });
+          return true; // 비동기 응답을 위해 true 반환
+          break;
+          
+        case 'CHANGE_AGENT_ID':
+          console.log('🔄 에이전트 ID 변경 요청:', message.newId);
+          this.changeAgentId(message.newId, message.alias).then(() => {
+            sendResponse({ success: true });
+          }).catch((error) => {
+            console.error('❌ ID 변경 실패:', error);
+            sendResponse({ success: false, error: error.message });
+          });
+          return true; // 비동기 응답을 위해 true 반환
+          break;
+          
         default:
           console.log('❓ 알 수 없는 메시지 타입:', message.type);
       }
     });
+  }
+  
+  async updateAgentAlias(alias) {
+    // 별칭을 스토리지에 저장
+    await chrome.storage.local.set({ agentAlias: alias });
+    // 에이전트 ID 다시 로드
+    await this.loadAgentId();
+    // 재등록
+    await this.registerAgent();
+  }
+  
+  async changeAgentId(newId, alias) {
+    console.log(`📝 에이전트 ID 변경: ${this.agentId} → ${newId}`);
+    
+    // 폴링 중지
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    
+    // 현재 진행 중인 작업들 정리
+    this.currentJobs.clear();
+    
+    // 새 ID로 변경
+    this.agentId = alias ? `${newId}_${alias}` : newId;
+    
+    // 스토리지에 새 ID 저장
+    await chrome.storage.local.set({ 
+      agentId: newId,
+      agentAlias: alias || ''
+    });
+    
+    // 통계 초기화
+    this.statistics = {
+      completedJobs: 0,
+      failedJobs: 0,
+      totalJobs: 0
+    };
+    
+    // 연결 상태 초기화
+    this.isConnected = false;
+    this.updateConnectionStatus('offline');
+    
+    // 새 ID로 재등록
+    await this.registerAgent();
+    
+    console.log(`✅ 에이전트 ID 변경 완료: ${this.agentId}`);
   }
 }
 
