@@ -248,7 +248,7 @@ class DistributedCrawlingAgent {
       const timeoutId = setTimeout(async () => {
         console.log(`⏰ 작업 타임아웃: ${job.id}`);
         await this.reportJobResult(job.id, false, null, 'timeout');
-        this.releaseTab(availableTab.id);
+        await this.releaseTab(availableTab.id);
         this.cleanupJob(job.id);
       }, job.timeout);
       
@@ -279,7 +279,7 @@ class DistributedCrawlingAgent {
       }
       
       // 탭을 다시 idle 상태로 전환
-      this.releaseTab(availableTab.id);
+      await this.releaseTab(availableTab.id);
       this.cleanupJob(job.id);
       
     } catch (error) {
@@ -530,22 +530,59 @@ class DistributedCrawlingAgent {
   async initializeTabPool() {
     console.log(`🏊 탭 풀 초기화 시작 (${this.tabPoolSize}개)`);
     
-    for (let i = 0; i < this.tabPoolSize; i++) {
+    // 먼저 Storage에서 기존 탭 ID들을 확인
+    const storageData = await chrome.storage.local.get('tabPoolIds');
+    const existingTabIds = storageData.tabPoolIds || [];
+    
+    // 기존 탭들이 여전히 열려있는지 확인
+    if (existingTabIds.length > 0) {
+      console.log(`🔍 기존 탭 확인 중... (${existingTabIds.length}개)`);
+      
+      for (const tabId of existingTabIds) {
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          // 탭이 존재하고 about:blank인 경우만 재사용
+          if (tab && (tab.url === 'about:blank' || tab.url === 'chrome://newtab/')) {
+            this.tabPool.push(tab);
+            this.tabStatus.set(tab.id, { status: 'idle', jobId: null });
+            console.log(`♾️ 기존 탭 재사용: ${tab.id}`);
+          }
+        } catch (error) {
+          // 탭이 닫혔거나 접근할 수 없음
+          console.log(`❌ 탭 ${tabId} 접근 불가`);
+        }
+      }
+    }
+    
+    // 현재 활성 윈도우 확인 (시크릿 모드 포함)
+    const windows = await chrome.windows.getAll();
+    const currentWindow = windows.find(w => w.focused) || windows[0];
+    console.log(`🤵 현재 윈도우: ${currentWindow.incognito ? '시크릿 모드' : '일반 모드'}`);
+    
+    // 부족한 탭 수만큼 새로 생성
+    const tabsToCreate = this.tabPoolSize - this.tabPool.length;
+    
+    for (let i = 0; i < tabsToCreate; i++) {
       try {
-        // 빈 탭 생성 (about:blank)
+        // 현재 윈도우와 같은 모드에서 탭 생성
         const tab = await chrome.tabs.create({
           url: 'about:blank',
-          active: false
+          active: false,
+          windowId: currentWindow.id
         });
         
         this.tabPool.push(tab);
         this.tabStatus.set(tab.id, { status: 'idle', jobId: null });
         
-        console.log(`✅ 탭 생성 완료: ${tab.id}`);
+        console.log(`✅ 탭 생성 완료: ${tab.id} (${tab.incognito ? '시크릿' : '일반'})`);
       } catch (error) {
         console.error('❌ 탭 생성 실패:', error);
       }
     }
+    
+    // 탭 풀 ID들을 Storage에 저장
+    const newTabIds = this.tabPool.map(tab => tab.id);
+    await chrome.storage.local.set({ tabPoolIds: newTabIds });
     
     console.log(`🏊 탭 풀 초기화 완료: ${this.tabPool.length}개 탭 준비됨`);
   }
@@ -576,9 +613,14 @@ class DistributedCrawlingAgent {
     const index = this.tabPool.findIndex(t => t.id === oldTab.id);
     if (index !== -1) {
       try {
+        // 현재 활성 윈도우 확인
+        const windows = await chrome.windows.getAll();
+        const currentWindow = windows.find(w => w.focused) || windows[0];
+        
         const newTab = await chrome.tabs.create({
           url: 'about:blank',
-          active: false
+          active: false,
+          windowId: currentWindow.id
         });
         
         this.tabPool[index] = newTab;
@@ -594,12 +636,19 @@ class DistributedCrawlingAgent {
   }
   
   // 탭 해제 (다시 idle 상태로)
-  releaseTab(tabId) {
+  async releaseTab(tabId) {
     const status = this.tabStatus.get(tabId);
     if (status) {
       status.status = 'idle';
       status.jobId = null;
       console.log(`🔓 탭 ${tabId} 해제됨`);
+      
+      // 탭을 about:blank로 되돌리기 (메모리 정리)
+      try {
+        await chrome.tabs.update(tabId, { url: 'about:blank' });
+      } catch (error) {
+        console.error('탭 초기화 실패:', error);
+      }
     }
   }
   
@@ -628,13 +677,8 @@ class DistributedCrawlingAgent {
   // Service Worker 종료 시 탭 정리
   async cleanup() {
     console.log('🧹 탭 풀 정리 중...');
-    for (const tab of this.tabPool) {
-      try {
-        await chrome.tabs.remove(tab.id);
-      } catch (error) {
-        // 이미 닫혔을 수 있음
-      }
-    }
+    // 탭을 닫지 않고 Storage에서만 제거 (다음에 재사용 가능)
+    await chrome.storage.local.remove('tabPoolIds');
     this.tabPool = [];
     this.tabStatus.clear();
   }
