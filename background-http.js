@@ -39,22 +39,29 @@ class DistributedCrawlingAgent {
     if (result.agentId) {
       // 저장된 ID를 그대로 사용 (이미 별칭이 포함되어 있을 수 있음)
       this.agentId = result.agentId;
-      console.log('📋 기존 에이전트 ID 로드:', this.agentId);
     } else {
       // 새로 생성하는 경우
-      const baseId = this.generateAgentId();
-      this.agentId = baseId;
-      // 별칭이 있으면 추가
+      const randomId = this.generateAgentId(); // 4자리 랜덤 문자열
+      
+      // 별칭이 있으면 별칭_랜덤4자리, 없으면 랜덤4자리만
       if (result.agentAlias) {
-        this.agentId = `${baseId}_${result.agentAlias}`;
+        this.agentId = `${result.agentAlias}_${randomId}`;
+      } else {
+        this.agentId = randomId;
       }
+      
       await chrome.storage.local.set({ agentId: this.agentId });
-      console.log('🆕 새 에이전트 ID 생성:', this.agentId);
     }
   }
 
   generateAgentId() {
-    return `agent_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
+    // 4자리 랜덤 문자열 생성 (영문 소문자 + 숫자)
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let result = '';
+    for (let i = 0; i < 4; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
   }
 
   async registerAgent() {
@@ -397,27 +404,15 @@ class DistributedCrawlingAgent {
     // 별칭을 스토리지에 저장
     await chrome.storage.local.set({ agentAlias: alias });
     
-    // 현재 ID에서 기본 부분만 추출 (별칭 제거)
+    // 현재 ID 저장
     const oldAgentId = this.agentId;
-    let baseId = oldAgentId;
     
-    // 기존 ID에 별칭이 있었다면 제거
-    const lastUnderscoreIndex = oldAgentId.lastIndexOf('_');
-    if (lastUnderscoreIndex > 0) {
-      const possibleAlias = oldAgentId.substring(lastUnderscoreIndex + 1);
-      // 마지막 부분이 숫자가 아니면 별칭으로 간주
-      if (isNaN(possibleAlias)) {
-        baseId = oldAgentId.substring(0, lastUnderscoreIndex);
-      }
-    }
-    
-    // 새 별칭을 추가한 ID로 변경
-    this.agentId = alias ? `${baseId}_${alias}` : baseId;
+    // 새 ID 생성 (별칭_랜덤4자리 또는 랜덤4자리만)
+    const randomId = this.generateAgentId();
+    this.agentId = alias ? `${alias}_${randomId}` : randomId;
     
     // 스토리지에 새 ID 저장
     await chrome.storage.local.set({ agentId: this.agentId });
-    
-    console.log(`📝 에이전트 별칭 업데이트: ${oldAgentId} → ${this.agentId}`);
     
     // 기존 에이전트 삭제 요청
     if (oldAgentId !== this.agentId) {
@@ -428,7 +423,6 @@ class DistributedCrawlingAgent {
             'Content-Type': 'application/json'
           }
         });
-        console.log(`🗑️ 기존 에이전트 삭제: ${oldAgentId}`);
       } catch (error) {
         console.error('❌ 기존 에이전트 삭제 실패:', error);
       }
@@ -449,7 +443,6 @@ class DistributedCrawlingAgent {
   
   async changeAgentId(newId, alias) {
     const oldAgentId = this.agentId;
-    console.log(`📝 에이전트 ID 변경: ${oldAgentId} → ${newId}`);
     
     // 폴링 중지
     if (this.pollTimer) {
@@ -469,7 +462,6 @@ class DistributedCrawlingAgent {
             'Content-Type': 'application/json'
           }
         });
-        console.log(`🗑️ 기존 에이전트 삭제: ${oldAgentId}`);
       } catch (error) {
         console.error('❌ 기존 에이전트 삭제 실패:', error);
       }
@@ -478,15 +470,12 @@ class DistributedCrawlingAgent {
     // 새 ID를 그대로 사용 (별칭은 이미 ID에 포함되어 있음)
     this.agentId = newId;
     
-    // ID에서 별칭 부분 추출
+    // ID에서 별칭 부분 추출 (별칭_4자리 형식인 경우)
     let extractedAlias = '';
-    const lastUnderscoreIndex = newId.lastIndexOf('_');
-    if (lastUnderscoreIndex > 0) {
-      const possibleAlias = newId.substring(lastUnderscoreIndex + 1);
-      // 마지막 부분이 숫자가 아니면 별칭으로 간주
-      if (isNaN(possibleAlias)) {
-        extractedAlias = possibleAlias;
-      }
+    const parts = newId.split('_');
+    if (parts.length === 2 && parts[1].length === 4) {
+      // 별칭_4자리 형식
+      extractedAlias = parts[0];
     }
     
     // 스토리지에 새 ID와 추출한 별칭 저장
@@ -508,8 +497,6 @@ class DistributedCrawlingAgent {
     
     // 새 ID로 재등록
     await this.registerAgent();
-    
-    console.log(`✅ 에이전트 ID 변경 완료: ${this.agentId}`);
   }
 }
 

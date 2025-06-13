@@ -35,15 +35,14 @@ document.addEventListener('DOMContentLoaded', async () => {
 
             // 에이전트 ID 표시
             if (data.agentId) {
-                // 별칭이 있으면 별칭도 함께 표시
-                if (data.agentAlias) {
-                    agentIdEl.textContent = `${data.agentId}_${data.agentAlias}`;
-                    aliasInput.value = data.agentAlias;
-                } else {
-                    agentIdEl.textContent = data.agentId;
-                }
+                agentIdEl.textContent = data.agentId;
                 // 현재 ID를 입력 필드에 표시
                 agentIdInput.placeholder = data.agentId;
+                
+                // 저장된 별칭이 있으면 표시
+                if (data.agentAlias) {
+                    aliasInput.value = data.agentAlias;
+                }
             } else {
                 agentIdEl.textContent = '생성중...';
             }
@@ -123,17 +122,31 @@ document.addEventListener('DOMContentLoaded', async () => {
             // 새 ID가 입력되지 않았을 때, 자동 생성 옵션 제공
             const currentAlias = aliasInput.value.trim();
             if (currentAlias) {
-                // 별칭이 있으면 자동으로 ID 생성
-                const baseId = `agent_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
-                newId = `${baseId}_${currentAlias}`;
+                // 별칭이 있으면 별칭_랜덤4자리 형식으로 자동 생성
+                const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+                let randomId = '';
+                for (let i = 0; i < 4; i++) {
+                    randomId += chars.charAt(Math.floor(Math.random() * chars.length));
+                }
+                newId = `${currentAlias}_${randomId}`;
                 if (confirm(`새로운 에이전트 ID를 자동 생성하시겠습니까?\n\n생성될 ID: ${newId}`)) {
                     agentIdInput.value = newId;
                 } else {
                     return;
                 }
             } else {
-                showMessage('새로운 에이전트 ID를 입력하거나 별칭을 먼저 설정해주세요.', 'error');
-                return;
+                // 별칭이 없으면 랜덤4자리만 생성
+                const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+                let randomId = '';
+                for (let i = 0; i < 4; i++) {
+                    randomId += chars.charAt(Math.floor(Math.random() * chars.length));
+                }
+                newId = randomId;
+                if (confirm(`새로운 에이전트 ID를 자동 생성하시겠습니까?\n\n생성될 ID: ${newId}`)) {
+                    agentIdInput.value = newId;
+                } else {
+                    return;
+                }
             }
         }
         
