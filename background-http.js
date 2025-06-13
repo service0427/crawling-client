@@ -43,6 +43,9 @@ class DistributedCrawlingAgent {
     
     // 탭 풀 초기화
     await this.initializeTabPool();
+    
+    // 탭 상태 모니터링 시작
+    this.startTabMonitoring();
   }
 
   async loadAgentId() {
@@ -522,6 +525,8 @@ class DistributedCrawlingAgent {
         if (this.tabPool.length === 0) {
           this.initializeTabPool();
         }
+        // 탭 상태 확인
+        this.checkTabHealth();
       }
     });
   }
@@ -681,6 +686,72 @@ class DistributedCrawlingAgent {
     await chrome.storage.local.remove('tabPoolIds');
     this.tabPool = [];
     this.tabStatus.clear();
+  }
+  
+  // 탭 상태 모니터링 시작
+  startTabMonitoring() {
+    // 10초마다 탭 상태 확인
+    setInterval(() => {
+      this.checkTabHealth();
+    }, 10000);
+  }
+  
+  // 탭 건강 상태 확인
+  async checkTabHealth() {
+    const tabsToRemove = [];
+    
+    for (const tab of this.tabPool) {
+      try {
+        // 탭이 여전히 존재하는지 확인
+        await chrome.tabs.get(tab.id);
+      } catch (error) {
+        // 탭이 닫혔음
+        console.warn(`⚠️ 탭 ${tab.id}이 닫혔습니다.`);
+        tabsToRemove.push(tab);
+        this.tabStatus.delete(tab.id);
+      }
+    }
+    
+    // 닫힌 탭들을 풀에서 제거
+    for (const tab of tabsToRemove) {
+      const index = this.tabPool.findIndex(t => t.id === tab.id);
+      if (index !== -1) {
+        this.tabPool.splice(index, 1);
+      }
+    }
+    
+    // 탭이 부족하면 채우기
+    const missingTabs = this.tabPoolSize - this.tabPool.length;
+    if (missingTabs > 0) {
+      console.log(`🔄 ${missingTabs}개 탭 보충 필요`);
+      await this.replenishTabs(missingTabs);
+    }
+  }
+  
+  // 부족한 탭 보충
+  async replenishTabs(count) {
+    const windows = await chrome.windows.getAll();
+    const currentWindow = windows.find(w => w.focused) || windows[0];
+    
+    for (let i = 0; i < count; i++) {
+      try {
+        const tab = await chrome.tabs.create({
+          url: 'about:blank',
+          active: false,
+          windowId: currentWindow.id
+        });
+        
+        this.tabPool.push(tab);
+        this.tabStatus.set(tab.id, { status: 'idle', jobId: null });
+        console.log(`➕ 탭 보충 완료: ${tab.id}`);
+      } catch (error) {
+        console.error('❌ 탭 보충 실패:', error);
+      }
+    }
+    
+    // Storage 업데이트
+    const newTabIds = this.tabPool.map(tab => tab.id);
+    await chrome.storage.local.set({ tabPoolIds: newTabIds });
   }
 }
 
