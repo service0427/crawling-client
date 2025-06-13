@@ -32,6 +32,9 @@ class DistributedCrawlingAgent {
     
     // Chrome 메시지 리스너 설정
     this.setupMessageListeners();
+    
+    // Chrome Alarms를 사용하여 주기적으로 Service Worker 깨우기
+    this.setupAlarms();
   }
 
   async loadAgentId() {
@@ -66,8 +69,6 @@ class DistributedCrawlingAgent {
 
   async registerAgent() {
     try {
-      console.log('📝 에이전트 등록 시도...');
-      
       const response = await fetch(`${this.HTTP_SERVER}/api/agent/register`, {
         method: 'POST',
         headers: {
@@ -84,12 +85,9 @@ class DistributedCrawlingAgent {
           }
         })
       });
-
-      console.log('📡 등록 응답 상태:', response.status, 'OK:', response.ok);
       
       if (response.ok) {
         const data = await response.json();
-        console.log('✅ 에이전트 등록 성공:', data);
         this.isConnected = true;
         this.updateConnectionStatus('online');
         
@@ -97,7 +95,6 @@ class DistributedCrawlingAgent {
         this.startPolling();
       } else {
         const errorText = await response.text();
-        console.error('❌ 등록 실패 응답:', errorText);
         throw new Error(`Registration failed: ${response.status}`);
       }
     } catch (error) {
@@ -165,6 +162,7 @@ class DistributedCrawlingAgent {
       });
       
       if (!response.ok) {
+        const errorText = await response.text();
         throw new Error(`HTTP error! status: ${response.status}`);
       }
       
@@ -183,7 +181,6 @@ class DistributedCrawlingAgent {
         
         // 10초 후 재연결 시도
         setTimeout(() => {
-          console.log('🔄 재연결 시도...');
           this.registerAgent();
         }, 10000);
       }
@@ -497,6 +494,21 @@ class DistributedCrawlingAgent {
     
     // 새 ID로 재등록
     await this.registerAgent();
+  }
+  
+  setupAlarms() {
+    // 30초마다 알람을 설정하여 Service Worker를 깨우기
+    chrome.alarms.create('keepAlive', { periodInMinutes: 0.5 }); // 30초
+    
+    // 알람 리스너 설정
+    chrome.alarms.onAlarm.addListener((alarm) => {
+      if (alarm.name === 'keepAlive') {
+        // 폴링이 중단되었다면 다시 시장
+        if (!this.pollTimer && this.isConnected) {
+          this.startPolling();
+        }
+      }
+    });
   }
 }
 
