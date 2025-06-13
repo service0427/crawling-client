@@ -17,6 +17,11 @@ class DistributedCrawlingAgent {
     this.pollInterval = 3000; // 3초마다 작업 확인
     this.pollTimer = null;
     
+    // 탭 풀 관리
+    this.tabPool = [];
+    this.tabPoolSize = 3; // 미리 생성할 탭 개수
+    this.tabStatus = new Map(); // tabId -> {status: 'idle'|'busy', jobId: null}
+    
     this.init();
   }
 
@@ -35,6 +40,9 @@ class DistributedCrawlingAgent {
     
     // Chrome Alarms를 사용하여 주기적으로 Service Worker 깨우기
     this.setupAlarms();
+    
+    // 탭 풀 초기화
+    await this.initializeTabPool();
   }
 
   async loadAgentId() {
@@ -219,55 +227,63 @@ class DistributedCrawlingAgent {
     console.log(`🔄 작업 실행 시작: ${job.id}`);
     
     try {
+      // 사용 가능한 탭 찾기
+      const availableTab = await this.getAvailableTab();
+      if (!availableTab) {
+        throw new Error('사용 가능한 탭이 없습니다');
+      }
+      
+      // 탭 상태를 busy로 변경
+      this.tabStatus.set(availableTab.id, { status: 'busy', jobId: job.id });
+      job.tabId = availableTab.id;
+      job.status = 'executing';
+      
       // 검색 URL 생성
       const searchUrl = `https://search.shopping.naver.com/search/all?query=${encodeURIComponent(job.query)}`;
       
-      // 새 탭 생성
-      const tab = await chrome.tabs.create({
-        url: searchUrl,
-        active: false
-      });
-      
-      job.tabId = tab.id;
-      job.status = 'executing';
+      // 기존 탭에서 URL 변경
+      await chrome.tabs.update(availableTab.id, { url: searchUrl });
       
       // 타임아웃 설정
       const timeoutId = setTimeout(async () => {
         console.log(`⏰ 작업 타임아웃: ${job.id}`);
         await this.reportJobResult(job.id, false, null, 'timeout');
+        this.releaseTab(availableTab.id);
         this.cleanupJob(job.id);
       }, job.timeout);
       
       job.timeoutId = timeoutId;
       
-      // Content script 주입 대기
-      setTimeout(async () => {
-        try {
-          // Content script에게 데이터 수집 요청
-          const response = await chrome.tabs.sendMessage(tab.id, {
-            type: 'COLLECT_PAGE_DATA',
-            jobId: job.id
-          });
+      // 페이지 로드 완료 대기
+      await this.waitForTabLoad(availableTab.id);
+      
+      // Content script에게 데이터 수집 요청
+      try {
+        const response = await chrome.tabs.sendMessage(availableTab.id, {
+          type: 'COLLECT_PAGE_DATA',
+          jobId: job.id
+        });
+        
+        if (response && response.success) {
+          const processingTime = Date.now() - job.startTime;
+          console.log(`✅ 작업 완료: ${job.id} (${processingTime}ms)`);
           
-          if (response && response.success) {
-            const processingTime = Date.now() - job.startTime;
-            console.log(`✅ 작업 완료: ${job.id} (${processingTime}ms)`);
-            
-            await this.reportJobResult(job.id, true, response.data, null, processingTime);
-          } else {
-            throw new Error('Content script 응답 없음');
-          }
-          
-        } catch (error) {
-          console.error(`❌ Content script 통신 실패: ${job.id}`, error);
-          await this.reportJobResult(job.id, false, null, error.message);
+          await this.reportJobResult(job.id, true, response.data, null, processingTime);
+        } else {
+          throw new Error('Content script 응답 없음');
         }
         
-        this.cleanupJob(job.id);
-      }, 3000); // 3초 후 데이터 수집
+      } catch (error) {
+        console.error(`❌ Content script 통신 실패: ${job.id}`, error);
+        await this.reportJobResult(job.id, false, null, error.message);
+      }
+      
+      // 탭을 다시 idle 상태로 전환
+      this.releaseTab(availableTab.id);
+      this.cleanupJob(job.id);
       
     } catch (error) {
-      console.error(`❌ 탭 생성 실패: ${job.id}`, error);
+      console.error(`❌ 작업 실행 실패: ${job.id}`, error);
       await this.reportJobResult(job.id, false, null, error.message);
       this.cleanupJob(job.id);
     }
@@ -325,12 +341,7 @@ class DistributedCrawlingAgent {
       clearTimeout(job.timeoutId);
     }
     
-    // 탭 닫기
-    if (job.tabId) {
-      chrome.tabs.remove(job.tabId).catch(() => {
-        // 탭이 이미 닫혔을 수 있음
-      });
-    }
+    // 탭은 닫지 않고 풀에 유지
     
     this.currentJobs.delete(jobId);
     console.log(`🧹 작업 정리 완료: ${jobId}`);
@@ -503,12 +514,129 @@ class DistributedCrawlingAgent {
     // 알람 리스너 설정
     chrome.alarms.onAlarm.addListener((alarm) => {
       if (alarm.name === 'keepAlive') {
-        // 폴링이 중단되었다면 다시 시장
+        // 폴링이 중단되었다면 다시 시작
         if (!this.pollTimer && this.isConnected) {
           this.startPolling();
         }
+        // 탭 풀이 비어있다면 다시 초기화
+        if (this.tabPool.length === 0) {
+          this.initializeTabPool();
+        }
       }
     });
+  }
+  
+  // 탭 풀 초기화
+  async initializeTabPool() {
+    console.log(`🏊 탭 풀 초기화 시작 (${this.tabPoolSize}개)`);
+    
+    for (let i = 0; i < this.tabPoolSize; i++) {
+      try {
+        // 빈 탭 생성 (about:blank)
+        const tab = await chrome.tabs.create({
+          url: 'about:blank',
+          active: false
+        });
+        
+        this.tabPool.push(tab);
+        this.tabStatus.set(tab.id, { status: 'idle', jobId: null });
+        
+        console.log(`✅ 탭 생성 완료: ${tab.id}`);
+      } catch (error) {
+        console.error('❌ 탭 생성 실패:', error);
+      }
+    }
+    
+    console.log(`🏊 탭 풀 초기화 완료: ${this.tabPool.length}개 탭 준비됨`);
+  }
+  
+  // 사용 가능한 탭 찾기
+  async getAvailableTab() {
+    // idle 상태의 탭 찾기
+    for (const tab of this.tabPool) {
+      const status = this.tabStatus.get(tab.id);
+      if (status && status.status === 'idle') {
+        // 탭이 여전히 존재하는지 확인
+        try {
+          await chrome.tabs.get(tab.id);
+          return tab;
+        } catch (error) {
+          // 탭이 닫혔다면 풀에서 제거하고 새로 생성
+          console.warn(`⚠️ 탭 ${tab.id}이 닫혔습니다. 새로 생성합니다.`);
+          await this.replaceClosedTab(tab);
+        }
+      }
+    }
+    
+    return null;
+  }
+  
+  // 닫힌 탭 교체
+  async replaceClosedTab(oldTab) {
+    const index = this.tabPool.findIndex(t => t.id === oldTab.id);
+    if (index !== -1) {
+      try {
+        const newTab = await chrome.tabs.create({
+          url: 'about:blank',
+          active: false
+        });
+        
+        this.tabPool[index] = newTab;
+        this.tabStatus.delete(oldTab.id);
+        this.tabStatus.set(newTab.id, { status: 'idle', jobId: null });
+        
+        console.log(`🔄 탭 교체 완료: ${oldTab.id} → ${newTab.id}`);
+      } catch (error) {
+        console.error('❌ 탭 교체 실패:', error);
+        this.tabPool.splice(index, 1);
+      }
+    }
+  }
+  
+  // 탭 해제 (다시 idle 상태로)
+  releaseTab(tabId) {
+    const status = this.tabStatus.get(tabId);
+    if (status) {
+      status.status = 'idle';
+      status.jobId = null;
+      console.log(`🔓 탭 ${tabId} 해제됨`);
+    }
+  }
+  
+  // 탭 로드 완료 대기
+  async waitForTabLoad(tabId) {
+    return new Promise((resolve) => {
+      const checkTab = async () => {
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          if (tab.status === 'complete') {
+            // 추가로 1초 대기 (동적 컨텐츠 로드)
+            setTimeout(resolve, 1000);
+          } else {
+            setTimeout(checkTab, 100);
+          }
+        } catch (error) {
+          console.error('탭 확인 실패:', error);
+          resolve();
+        }
+      };
+      
+      checkTab();
+    });
+  }
+  
+  // Service Worker 종료 시 탭 정리
+  async cleanup() {
+    console.log('🧹 탭 풀 정리 중...');
+    for (const tab of this.tabPool) {
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch (error) {
+        // 이미 닫혔을 수 있음
+      }
+    }
+    this.tabPool = [];
+    this.tabStatus.clear();
   }
 }
 
@@ -537,9 +665,11 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
 });
 
 // 전역 에러 핸들러
-chrome.runtime.onSuspend.addListener(() => {
+chrome.runtime.onSuspend.addListener(async () => {
   console.log('😴 서비스 워커 일시중지');
   if (agent.pollTimer) {
     clearInterval(agent.pollTimer);
   }
+  // 탭 풀 정리
+  await agent.cleanup();
 });
