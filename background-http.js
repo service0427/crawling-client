@@ -37,20 +37,18 @@ class DistributedCrawlingAgent {
   async loadAgentId() {
     const result = await chrome.storage.local.get(['agentId', 'agentAlias']);
     if (result.agentId) {
+      // 저장된 ID를 그대로 사용 (이미 별칭이 포함되어 있을 수 있음)
       this.agentId = result.agentId;
-      // 별칭이 있으면 에이전트 ID에 추가
-      if (result.agentAlias) {
-        this.agentId = `${result.agentId}_${result.agentAlias}`;
-      }
       console.log('📋 기존 에이전트 ID 로드:', this.agentId);
     } else {
+      // 새로 생성하는 경우
       const baseId = this.generateAgentId();
       this.agentId = baseId;
       // 별칭이 있으면 추가
       if (result.agentAlias) {
         this.agentId = `${baseId}_${result.agentAlias}`;
       }
-      await chrome.storage.local.set({ agentId: baseId });
+      await chrome.storage.local.set({ agentId: this.agentId });
       console.log('🆕 새 에이전트 ID 생성:', this.agentId);
     }
   }
@@ -143,7 +141,7 @@ class DistributedCrawlingAgent {
 
   async sendHeartbeat() {
     try {
-      await fetch(`${this.HTTP_SERVER}/api/agent/message`, {
+      const response = await fetch(`${this.HTTP_SERVER}/api/agent/message`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
@@ -158,8 +156,30 @@ class DistributedCrawlingAgent {
           }
         })
       });
+      
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      
+      // 연결 상태 업데이트
+      if (!this.isConnected) {
+        this.isConnected = true;
+        this.updateConnectionStatus('online');
+      }
     } catch (error) {
       console.error('❌ 하트비트 전송 실패:', error);
+      
+      // 연결 실패 시 상태 업데이트
+      if (this.isConnected) {
+        this.isConnected = false;
+        this.updateConnectionStatus('offline');
+        
+        // 10초 후 재연결 시도
+        setTimeout(() => {
+          console.log('🔄 재연결 시도...');
+          this.registerAgent();
+        }, 10000);
+      }
     }
   }
 
@@ -376,14 +396,60 @@ class DistributedCrawlingAgent {
   async updateAgentAlias(alias) {
     // 별칭을 스토리지에 저장
     await chrome.storage.local.set({ agentAlias: alias });
-    // 에이전트 ID 다시 로드
-    await this.loadAgentId();
-    // 재등록
+    
+    // 현재 ID에서 기본 부분만 추출 (별칭 제거)
+    const oldAgentId = this.agentId;
+    let baseId = oldAgentId;
+    
+    // 기존 ID에 별칭이 있었다면 제거
+    const lastUnderscoreIndex = oldAgentId.lastIndexOf('_');
+    if (lastUnderscoreIndex > 0) {
+      const possibleAlias = oldAgentId.substring(lastUnderscoreIndex + 1);
+      // 마지막 부분이 숫자가 아니면 별칭으로 간주
+      if (isNaN(possibleAlias)) {
+        baseId = oldAgentId.substring(0, lastUnderscoreIndex);
+      }
+    }
+    
+    // 새 별칭을 추가한 ID로 변경
+    this.agentId = alias ? `${baseId}_${alias}` : baseId;
+    
+    // 스토리지에 새 ID 저장
+    await chrome.storage.local.set({ agentId: this.agentId });
+    
+    console.log(`📝 에이전트 별칭 업데이트: ${oldAgentId} → ${this.agentId}`);
+    
+    // 기존 에이전트 삭제 요청
+    if (oldAgentId !== this.agentId) {
+      try {
+        await fetch(`${this.HTTP_SERVER}/api/agent/${encodeURIComponent(oldAgentId)}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        console.log(`🗑️ 기존 에이전트 삭제: ${oldAgentId}`);
+      } catch (error) {
+        console.error('❌ 기존 에이전트 삭제 실패:', error);
+      }
+    }
+    
+    // 폴링 중지
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    
+    // 연결 상태 초기화
+    this.isConnected = false;
+    
+    // 새 ID로 재등록
     await this.registerAgent();
   }
   
   async changeAgentId(newId, alias) {
-    console.log(`📝 에이전트 ID 변경: ${this.agentId} → ${newId}`);
+    const oldAgentId = this.agentId;
+    console.log(`📝 에이전트 ID 변경: ${oldAgentId} → ${newId}`);
     
     // 폴링 중지
     if (this.pollTimer) {
@@ -394,13 +460,39 @@ class DistributedCrawlingAgent {
     // 현재 진행 중인 작업들 정리
     this.currentJobs.clear();
     
-    // 새 ID로 변경
-    this.agentId = alias ? `${newId}_${alias}` : newId;
+    // 기존 에이전트 삭제 요청
+    if (oldAgentId && oldAgentId !== newId) {
+      try {
+        await fetch(`${this.HTTP_SERVER}/api/agent/${encodeURIComponent(oldAgentId)}`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        });
+        console.log(`🗑️ 기존 에이전트 삭제: ${oldAgentId}`);
+      } catch (error) {
+        console.error('❌ 기존 에이전트 삭제 실패:', error);
+      }
+    }
     
-    // 스토리지에 새 ID 저장
+    // 새 ID를 그대로 사용 (별칭은 이미 ID에 포함되어 있음)
+    this.agentId = newId;
+    
+    // ID에서 별칭 부분 추출
+    let extractedAlias = '';
+    const lastUnderscoreIndex = newId.lastIndexOf('_');
+    if (lastUnderscoreIndex > 0) {
+      const possibleAlias = newId.substring(lastUnderscoreIndex + 1);
+      // 마지막 부분이 숫자가 아니면 별칭으로 간주
+      if (isNaN(possibleAlias)) {
+        extractedAlias = possibleAlias;
+      }
+    }
+    
+    // 스토리지에 새 ID와 추출한 별칭 저장
     await chrome.storage.local.set({ 
       agentId: newId,
-      agentAlias: alias || ''
+      agentAlias: extractedAlias
     });
     
     // 통계 초기화

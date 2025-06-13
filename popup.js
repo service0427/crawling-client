@@ -117,17 +117,30 @@ document.addEventListener('DOMContentLoaded', async () => {
     
     // Agent ID 변경 함수
     async function changeAgentId() {
-        const newId = agentIdInput.value.trim();
+        let newId = agentIdInput.value.trim();
         
         if (!newId) {
-            showMessage('새로운 에이전트 ID를 입력해주세요.', 'error');
-            return;
+            // 새 ID가 입력되지 않았을 때, 자동 생성 옵션 제공
+            const currentAlias = aliasInput.value.trim();
+            if (currentAlias) {
+                // 별칭이 있으면 자동으로 ID 생성
+                const baseId = `agent_${Date.now()}_${Math.random().toString(36).substr(2, 8)}`;
+                newId = `${baseId}_${currentAlias}`;
+                if (confirm(`새로운 에이전트 ID를 자동 생성하시겠습니까?\n\n생성될 ID: ${newId}`)) {
+                    agentIdInput.value = newId;
+                } else {
+                    return;
+                }
+            } else {
+                showMessage('새로운 에이전트 ID를 입력하거나 별칭을 먼저 설정해주세요.', 'error');
+                return;
+            }
         }
         
-        // ID 형식 검증 (영문, 숫자, 언더스코어, 하이픈만 허용)
-        const idPattern = /^[a-zA-Z0-9_-]+$/;
+        // ID 형식 검증 (영문, 숫자, 언더스코어, 하이픈, 한글 허용)
+        const idPattern = /^[a-zA-Z0-9_가-힣-]+$/;
         if (!idPattern.test(newId)) {
-            showMessage('ID는 영문, 숫자, _, - 만 사용 가능합니다.', 'error');
+            showMessage('ID는 영문, 숫자, 한글, _, - 만 사용 가능합니다.', 'error');
             return;
         }
         
@@ -137,17 +150,14 @@ document.addEventListener('DOMContentLoaded', async () => {
         }
         
         try {
-            // 기존 별칭 가져오기
-            const { agentAlias } = await chrome.storage.local.get('agentAlias');
-            
-            // Chrome Storage에 새 ID 저장
+            // Chrome Storage에 새 ID 저장 (별칭 정보는 ID에서 추출하거나 별도로 관리)
             await chrome.storage.local.set({ agentId: newId });
             
             // Background script에 ID 변경 알림
             const response = await chrome.runtime.sendMessage({
                 type: 'CHANGE_AGENT_ID',
                 newId: newId,
-                alias: agentAlias || ''
+                alias: '' // 별칭은 ID에 이미 포함되어 있으므로 빈 문자열 전달
             });
             
             if (response && response.success) {
