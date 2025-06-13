@@ -12,6 +12,8 @@
     "alarms"
   ],
   
+  "incognito": "spanning",
+  
   "host_permissions": [
     "http://mkt.techb.kr/*",
     "ws://mkt.techb.kr:8081/*",
