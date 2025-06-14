@@ -55,7 +55,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
 
         } catch (error) {
-            console.error('상태 로드 실패:', error);
             messageEl.textContent = '상태를 불러올 수 없습니다.';
             messageEl.className = 'message error';
         }
@@ -97,7 +96,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showMessage('저장에 실패했습니다.', 'error');
             }
         } catch (error) {
-            console.error('별칭 저장 실패:', error);
             showMessage('저장 중 오류가 발생했습니다.', 'error');
         }
     }
@@ -182,7 +180,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 showMessage('ID 변경에 실패했습니다.', 'error');
             }
         } catch (error) {
-            console.error('Agent ID 변경 실패:', error);
             showMessage('ID 변경 중 오류가 발생했습니다.', 'error');
         }
     }

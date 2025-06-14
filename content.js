@@ -1,6 +1,5 @@
 // 📁 extension/content.js - 분산 크롤링 페이지 데이터 수집기
 
-console.log('🎯 분산 크롤링 Content Script 시작');
 
 // 에이전트 ID 및 상태 관리
 let agentId = null;
@@ -14,9 +13,7 @@ async function loadAgentInfo() {
   try {
     const result = await chrome.storage.local.get(['agentId', 'serverId']);
     agentId = result.agentId;
-    console.log('📋 에이전트 정보 로드:', agentId);
   } catch (error) {
-    console.error('❌ 에이전트 정보 로드 실패:', error);
   }
 }
 
@@ -61,7 +58,6 @@ function getAgentData() {
       contentLanguage: document.documentElement.lang || 'unknown'
     };
 
-    console.log('📦 페이지 데이터 수집 완료:', metadata);
 
     return {
       agentId: agentId,
@@ -74,7 +70,6 @@ function getAgentData() {
     };
 
   } catch (error) {
-    console.error('❌ 데이터 수집 중 오류:', error);
     throw error;
   }
 }
@@ -108,7 +103,6 @@ function collectShoppingData() {
             });
           }
         } catch (error) {
-          console.warn('⚠️ 상품 데이터 추출 실패:', index, error);
         }
       });
     }
@@ -133,7 +127,6 @@ function collectShoppingData() {
             });
           }
         } catch (error) {
-          console.warn('⚠️ 일반 상품 데이터 추출 실패:', index, error);
         }
       });
     }
@@ -146,7 +139,6 @@ function collectShoppingData() {
     };
 
   } catch (error) {
-    console.error('❌ 쇼핑 데이터 수집 실패:', error);
     return null;
   }
 }
@@ -170,7 +162,6 @@ function collectPerformanceData() {
       redirectCount: navigation.redirectCount
     };
   } catch (error) {
-    console.warn('⚠️ 성능 데이터 수집 실패:', error);
     return null;
   }
 }
@@ -250,21 +241,17 @@ async function sendHttpBackup(data) {
     });
 
     if (response.ok) {
-      console.log('📤 HTTP 백업 전송 성공');
       return true;
     } else {
-      console.warn('⚠️ HTTP 백업 전송 실패:', response.status);
       return false;
     }
   } catch (error) {
-    console.error('❌ HTTP 백업 전송 오류:', error);
     return false;
   }
 }
 
 // Background Script 메시지 리스너 - 분산 크롤링용
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  console.log('📨 Background Script 메시지 수신:', message.type);
 
   switch (message.type) {
     case 'COLLECT_PAGE_DATA':
@@ -281,18 +268,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       break;
 
     default:
-      console.log('❓ 알 수 없는 메시지 타입:', message.type);
   }
 });
 
 async function handleDataCollectionRequest(message, sendResponse) {
   currentJobId = message.jobId;
-  console.log('📡 페이지 데이터 수집 요청:', currentJobId);
 
   try {
     // 페이지 로드 완료 대기
     if (document.readyState !== 'complete') {
-      console.log('⏳ 페이지 로드 완료 대기...');
 
       const loadPromise = new Promise((resolve) => {
         const checkLoad = () => {
@@ -308,8 +292,8 @@ async function handleDataCollectionRequest(message, sendResponse) {
       await loadPromise;
     }
 
-    // 추가 대기 (동적 콘텐츠 로드)
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    // 추가 대기 (동적 콘텐츠 로드) - 최적화: 1.5초 → 0.5초
+    await new Promise(resolve => setTimeout(resolve, 500));
 
     const agentData = getAgentData();
 
@@ -328,11 +312,9 @@ async function handleDataCollectionRequest(message, sendResponse) {
       }
     };
 
-    console.log('✅ 페이지 데이터 수집 완료:', currentJobId, 'HTML 크기:', agentData.html?.length || 0);
     sendResponse(responseData);
 
   } catch (error) {
-    console.error('❌ 페이지 데이터 수집 실패:', error);
 
     sendResponse({
       success: false,
@@ -353,7 +335,6 @@ async function handleDataCollectionRequest(message, sendResponse) {
 
       await sendHttpBackup(basicData);
     } catch (backupError) {
-      console.error('❌ 백업 전송도 실패:', backupError);
     }
   } finally {
     currentJobId = null;
@@ -363,14 +344,12 @@ async function handleDataCollectionRequest(message, sendResponse) {
 // 페이지 가시성 변경 감지
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'visible' && currentJobId) {
-    console.log('👁️ 페이지 활성화됨 - 작업 계속:', currentJobId);
   }
 });
 
 // 페이지 언로드 시 정리
 window.addEventListener('beforeunload', () => {
   if (currentJobId) {
-    console.log('👋 페이지 언로드 - 작업 정리:', currentJobId);
   }
 });
 
@@ -381,7 +360,5 @@ chrome.runtime.sendMessage({
   timestamp: Date.now()
 }).catch(() => {
   // Background script가 준비되지 않았을 수 있음
-  console.log('⚠️ Background script 통신 실패 (정상적일 수 있음)');
 });
 
-console.log('🎯 분산 크롤링 Content Script 로드 완료'); 
